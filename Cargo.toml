@@ -12,3 +12,4 @@ serde_json = "1.0"
 futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
+wasmtime = "33.0.0"
