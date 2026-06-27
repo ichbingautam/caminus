@@ -12,6 +12,8 @@ pub enum Operation {
     Update,
     Delete,
     Snapshot,
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
