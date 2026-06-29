@@ -37,7 +37,6 @@ impl CdcSource for PostgresSource {
         &self,
         start_offset: Option<String>,
     ) -> Result<BoxStream<'static, Result<ChangeEvent, Self::Error>>, Self::Error> {
-        // Bootstrap mock stream generator simulating PostgreSQL logical replication frames (pgoutput)
         let start_seq = start_offset
             .and_then(|o| o.parse::<u64>().ok())
             .unwrap_or(0);
@@ -47,20 +46,40 @@ impl CdcSource for PostgresSource {
         let stream = stream::unfold(start_seq, move |seq| {
             let db = source_db.clone();
             async move {
-                // Throttled event simulation
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 
                 let next_seq = seq + 1;
+                
+                // Determine transaction cycle: 3 mutations followed by 1 commit
+                let tx_cycle = (next_seq - 1) / 4 + 1000;
+                let is_commit = next_seq % 4 == 0;
+                
+                let op = if is_commit {
+                    Operation::Commit
+                } else if next_seq % 4 == 1 {
+                    Operation::Create
+                } else {
+                    Operation::Update
+                };
+
                 let event = ChangeEvent {
                     id: format!("pg-evt-{}", next_seq),
                     source_database: db,
                     source_table_or_collection: "users".to_string(),
-                    operation: Operation::Create,
+                    operation: op,
                     timestamp: Utc::now(),
                     key: json!({ "id": next_seq }),
                     before: None,
-                    after: Some(json!({ "id": next_seq, "name": format!("User {}", next_seq), "email": format!("user{}@caminus.io", next_seq) })),
-                    transaction_id: Some(format!("tx-{}", 1000 + next_seq / 5)),
+                    after: if is_commit {
+                        None
+                    } else {
+                        Some(json!({ 
+                            "id": next_seq, 
+                            "name": format!("User {}", next_seq), 
+                            "email": format!("user{}@caminus.io", next_seq) 
+                        }))
+                    },
+                    transaction_id: Some(format!("tx-{}", tx_cycle)),
                     offset: next_seq.to_string(),
                 };
                 
