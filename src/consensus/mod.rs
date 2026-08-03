@@ -12,6 +12,7 @@ pub enum StateRole {
 pub struct ClusterCoordinator {
     node_id: u64,
     is_leader: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl ClusterCoordinator {
@@ -19,6 +20,7 @@ impl ClusterCoordinator {
         Self {
             node_id,
             is_leader: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -29,6 +31,7 @@ impl ClusterCoordinator {
     /// Run the consensus election state machine loop in the background.
     pub fn start_election_loop(&self) {
         let is_leader_clone = Arc::clone(&self.is_leader);
+        let shutdown_clone = Arc::clone(&self.shutdown);
         let node_id = self.node_id;
 
         tokio::spawn(async move {
@@ -43,6 +46,10 @@ impl ClusterCoordinator {
             
             loop {
                 tokio::time::sleep(election_timeout).await;
+                if shutdown_clone.load(Ordering::Relaxed) {
+                    println!("[Consensus Node {}] Election loop terminated.", node_id);
+                    break;
+                }
                 
                 match role {
                     StateRole::Follower => {
@@ -75,6 +82,15 @@ impl ClusterCoordinator {
             }
         });
     }
+
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        self.is_leader.store(false, Ordering::Relaxed);
+        println!(
+            "[Consensus Node {}] Voluntarily stepping down and releasing leadership...",
+            self.node_id
+        );
+    }
 }
 
 #[cfg(test)]
@@ -90,5 +106,18 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(800)).await;
 
         assert!(coordinator.is_leader());
+    }
+
+    #[tokio::test]
+    async fn test_consensus_shutdown() {
+        let coordinator = ClusterCoordinator::new(2);
+        coordinator.start_election_loop();
+
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        assert!(coordinator.is_leader());
+
+        // Perform graceful shutdown
+        coordinator.shutdown();
+        assert!(!coordinator.is_leader());
     }
 }

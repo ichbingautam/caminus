@@ -212,6 +212,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     signal::ctrl_c().await?;
     println!("Shutdown signal received. Stopping Caminus engine...");
 
+    // Gracefully step down from consensus leadership
+    coordinator.shutdown();
+
     pg_handle.abort();
     cass_handle.abort();
 
