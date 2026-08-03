@@ -2,6 +2,8 @@ use std::path::Path;
 use rocksdb::{DB, Options};
 use thiserror::Error;
 
+pub mod schema;
+
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("RocksDB error: {0}")]
