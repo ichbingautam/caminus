@@ -29,6 +29,24 @@ impl CdcSource for CassandraSource {
         &self,
         start_offset: Option<String>,
     ) -> Result<BoxStream<'static, Result<ChangeEvent, Self::Error>>, Self::Error> {
+        static ATTEMPTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let make_conn = || async {
+            let attempt = ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if attempt < 2 {
+                Err(CassandraSourceError::DirectoryAccess("Simulated Cassandra CommitLog folder lock error".to_string()))
+            } else {
+                Ok(())
+            }
+        };
+
+        super::retry_with_backoff(
+            make_conn,
+            5,
+            Duration::from_millis(50),
+            2.0,
+            Duration::from_millis(500),
+        ).await?;
+
         // Bootstrap mock stream generator simulating Cassandra CommitLog parsing
         let start_pos = start_offset
             .and_then(|o| o.parse::<u64>().ok())
