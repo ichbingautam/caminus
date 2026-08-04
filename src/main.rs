@@ -23,7 +23,10 @@ use resiliency::dedup::DeduplicationFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting Caminus CDC Engine (Phase 3 - Cluster Coordination & Resiliency)...");
+    println!("Starting Caminus CDC Engine (Phase 4 - Schema Registry & Observability)...");
+
+    // Start Prometheus metrics exporter
+    resiliency::metrics::MetricsRegistry::start_exporter("127.0.0.1:9100");
 
     // Initialize distributed consensus coordinator (Node 1)
     let coordinator = Arc::new(ClusterCoordinator::new(1));
@@ -93,9 +96,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match event_result {
                         Ok(event) => {
+                            resiliency::metrics::MetricsRegistry::increment_ingested();
+                            let start_time = std::time::Instant::now();
+
                             // 1. Check deduplication exactly-once filter
                             if dedup_filter.check_and_track(&event.id) {
                                 println!("[PG Source] Filtered out duplicate event ID: {}", event.id);
+                                resiliency::metrics::MetricsRegistry::increment_duplicates();
                                 continue;
                             }
 
@@ -125,6 +132,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let _ = pg_stdout.send(&transformed).await;
                                     
                                     let _ = pg_store.save_offset("postgres_users", &transformed.offset);
+                                    
+                                    resiliency::metrics::MetricsRegistry::increment_processed();
+                                    resiliency::metrics::MetricsRegistry::record_latency(start_time.elapsed().as_micros() as u64);
                                 }
                             }
                         }
@@ -165,7 +175,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match event_result {
                         Ok(event) => {
+                            resiliency::metrics::MetricsRegistry::increment_ingested();
+                            let start_time = std::time::Instant::now();
+
                             if dedup_filter.check_and_track(&event.id) {
+                                resiliency::metrics::MetricsRegistry::increment_duplicates();
                                 continue;
                             }
 
@@ -175,6 +189,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let _ = cass_kafka.send(&transformed).await;
                                     let _ = cass_stdout.send(&transformed).await;
                                     let _ = cass_store.save_offset("cassandra_sensors", &transformed.offset);
+
+                                    resiliency::metrics::MetricsRegistry::increment_processed();
+                                    resiliency::metrics::MetricsRegistry::record_latency(start_time.elapsed().as_micros() as u64);
                                 }
                             }
                         }
@@ -194,6 +211,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wait for shutdown signal (Ctrl+C)
     signal::ctrl_c().await?;
     println!("Shutdown signal received. Stopping Caminus engine...");
+
+    // Gracefully step down from consensus leadership
+    coordinator.shutdown();
 
     pg_handle.abort();
     cass_handle.abort();
