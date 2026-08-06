@@ -11,6 +11,8 @@ mod transform;
 mod consensus;
 mod snapshot;
 mod resiliency;
+mod observability;
+mod serialize;
 
 use source::{CdcSource, postgres::PostgresSource, cassandra::CassandraSource};
 use storage::StateStore;
@@ -23,10 +25,12 @@ use resiliency::dedup::DeduplicationFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting Caminus CDC Engine (Phase 4 - Schema Registry & Observability)...");
+    println!("Starting Caminus CDC Engine (Phase 4 - Observability & Optimization)...");
 
-    // Start Prometheus metrics exporter
-    resiliency::metrics::MetricsRegistry::start_exporter("127.0.0.1:9100");
+    // Initialize Prometheus metrics scraper server on port 9000
+    if let Err(e) = observability::init_metrics(9000) {
+        eprintln!("[Metrics Server] Failed to initialize metrics exporter: {:?}", e);
+    }
 
     // Initialize distributed consensus coordinator (Node 1)
     let coordinator = Arc::new(ClusterCoordinator::new(1));
@@ -68,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cass_source = CassandraSource::new("/var/lib/cassandra/cdc_raw".to_string());
 
-    // Spawn PostgreSQL logical replication task (consensus and watermark-snapshot aware)
+    // Spawn PostgreSQL logical replication task
     let pg_store = Arc::clone(&state_store);
     let pg_transformer = Arc::clone(&transformer);
     let pg_stdout = Arc::clone(&stdout_sink);
@@ -82,40 +86,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut watermark_engine = WatermarkSnapshotter::new();
         let mut dedup_filter = DeduplicationFilter::new(1000);
 
-        // Fetch stream starting offset
         let last_offset = pg_store.get_offset("postgres_users").unwrap_or(None);
         
         match pg_source.start_stream(last_offset).await {
             Ok(mut stream) => {
                 while let Some(event_result) = stream.next().await {
-                    // Check consensus role before handling events
                     if !pg_coord.is_leader() {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         continue;
                     }
 
+                    // Start timing metrics for latency check
+                    let processing_start = std::time::Instant::now();
+
                     match event_result {
                         Ok(event) => {
-                            resiliency::metrics::MetricsRegistry::increment_ingested();
-                            let start_time = std::time::Instant::now();
-
-                            // 1. Check deduplication exactly-once filter
                             if dedup_filter.check_and_track(&event.id) {
-                                println!("[PG Source] Filtered out duplicate event ID: {}", event.id);
-                                resiliency::metrics::MetricsRegistry::increment_duplicates();
                                 continue;
                             }
 
-                            // 2. Interleave and merge with Netflix DBLog watermark logic
                             let processed_event = match watermark_engine.process_replication_event(&event) {
                                 Some(e) => e,
-                                None => continue, // Filtered out metadata event
+                                None => continue,
                             };
 
                             let raw_op = processed_event.operation.clone();
                             let raw_tx = processed_event.transaction_id.clone();
                             
-                            // 3. Pipe through transactional buffer
                             let mutations = tx_buffer.process(processed_event);
                             
                             if raw_op == source::Operation::Commit {
@@ -125,16 +122,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
 
-                            // 4. Transform and dispatch to Sinks
                             for mut_event in mutations {
                                 if let Ok(transformed) = pg_transformer.transform(mut_event) {
                                     let _ = pg_kafka.send(&transformed).await;
                                     let _ = pg_stdout.send(&transformed).await;
                                     
                                     let _ = pg_store.save_offset("postgres_users", &transformed.offset);
+
+                                    // Record metrics: latency, lag, and throughput
+                                    let elapsed = processing_start.elapsed().as_secs_f64();
+                                    observability::record_processing_latency(elapsed);
+                                    observability::increment_throughput(1);
                                     
-                                    resiliency::metrics::MetricsRegistry::increment_processed();
-                                    resiliency::metrics::MetricsRegistry::record_latency(start_time.elapsed().as_micros() as u64);
+                                    let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
+                                    observability::record_replication_lag(lag);
                                 }
                             }
                         }
@@ -151,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Spawn Cassandra CommitLog parsing task
+    // Spawn Cassandra CommitLog ingestion task
     let cass_store = Arc::clone(&state_store);
     let cass_transformer = Arc::clone(&transformer);
     let cass_stdout = Arc::clone(&stdout_sink);
@@ -173,13 +174,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
+                    let processing_start = std::time::Instant::now();
+
                     match event_result {
                         Ok(event) => {
-                            resiliency::metrics::MetricsRegistry::increment_ingested();
-                            let start_time = std::time::Instant::now();
-
                             if dedup_filter.check_and_track(&event.id) {
-                                resiliency::metrics::MetricsRegistry::increment_duplicates();
                                 continue;
                             }
 
@@ -190,8 +189,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let _ = cass_stdout.send(&transformed).await;
                                     let _ = cass_store.save_offset("cassandra_sensors", &transformed.offset);
 
-                                    resiliency::metrics::MetricsRegistry::increment_processed();
-                                    resiliency::metrics::MetricsRegistry::record_latency(start_time.elapsed().as_micros() as u64);
+                                    // Record metrics
+                                    let elapsed = processing_start.elapsed().as_secs_f64();
+                                    observability::record_processing_latency(elapsed);
+                                    observability::increment_throughput(1);
+                                    
+                                    let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
+                                    observability::record_replication_lag(lag);
                                 }
                             }
                         }
@@ -211,9 +215,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wait for shutdown signal (Ctrl+C)
     signal::ctrl_c().await?;
     println!("Shutdown signal received. Stopping Caminus engine...");
-
-    // Gracefully step down from consensus leadership
-    coordinator.shutdown();
 
     pg_handle.abort();
     cass_handle.abort();

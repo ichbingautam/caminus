@@ -33,7 +33,7 @@ impl CdcSink for KafkaSink {
         // Simulating network latency to Kafka/Redpanda brokers
         tokio::time::sleep(Duration::from_millis(15)).await;
         
-        let payload = serde_json::to_string(event).map_err(|e| KafkaSinkError::Delivery(e.to_string()))?;
+        let payload = crate::serialize::serialize_event(event).map_err(|e| KafkaSinkError::Delivery(e.to_string()))?;
         println!(
             "[KAFKA SINK] Sent to topic '{}' on brokers '{}' - Payload size: {} bytes",
             self.topic, self.brokers, payload.len()

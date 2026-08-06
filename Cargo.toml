@@ -13,3 +13,6 @@ futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 wasmtime = "33.0.0"
+simd-json = "0.13.0"
+metrics = "0.22.0"
+metrics-exporter-prometheus = "0.13.0"
