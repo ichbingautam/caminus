@@ -16,6 +16,8 @@ mod serialize;
 
 use source::{CdcSource, postgres::PostgresSource, cassandra::CassandraSource};
 use storage::StateStore;
+use storage::schema::{SchemaRegistry, SchemaCompatibility};
+use resiliency::dlq::{DeadLetterQueue, DlqRecord};
 use sink::{CdcSink, stdout::StdoutSink, kafka::KafkaSink};
 use buffer::TransactionBuffer;
 use transform::{Transformer, WasmTransformer};
@@ -25,7 +27,7 @@ use resiliency::dedup::DeduplicationFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting Caminus CDC Engine (Phase 4 - Observability & Optimization)...");
+    println!("Starting Caminus CDC Engine (Phase 5 - Schema Evolution & DLQ Engine)...");
 
     // Initialize Prometheus metrics scraper server on port 9000
     if let Err(e) = observability::init_metrics(9000) {
@@ -40,6 +42,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_store_path = "./data/caminus_state";
     let state_store = Arc::new(StateStore::new(state_store_path)?);
     println!("Initialized local state store at {}", state_store_path);
+
+    // Register active table schema in store
+    let user_schema = serde_json::json!({
+        "fields": {
+            "id": "integer",
+            "name": "string"
+        }
+    });
+    if let Err(e) = SchemaRegistry::register_schema(&state_store, "postgres_users", user_schema, SchemaCompatibility::Backward) {
+        eprintln!("Failed to register initial schema: {:?}", e);
+    }
+
+    // Initialize Dead Letter Queue (DLQ)
+    let dlq = Arc::new(DeadLetterQueue::new("caminus_dlq_poison_pills".to_string()));
 
     // Initialize output sinks
     let stdout_sink = Arc::new(StdoutSink);
@@ -78,6 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pg_stdout = Arc::clone(&stdout_sink);
     let pg_kafka = Arc::clone(&kafka_sink);
     let pg_coord = Arc::clone(&coordinator);
+    let pg_dlq = Arc::clone(&dlq);
     
     let pg_handle = tokio::spawn(async move {
         println!("Waiting for PostgreSQL stream node leadership...");
@@ -96,15 +113,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
-                    // Start timing metrics for latency check
                     let processing_start = std::time::Instant::now();
 
                     match event_result {
                         Ok(event) => {
+                            // 1. Deduplication check
                             if dedup_filter.check_and_track(&event.id) {
                                 continue;
                             }
 
+                            // 2. Schema compatibility validation
+                            if let Err(e) = SchemaRegistry::validate_event(&pg_store, "postgres_users", &event) {
+                                let dlq_record = DlqRecord::new(
+                                    event,
+                                    e.to_string(),
+                                    "SchemaValidation".to_string(),
+                                    1,
+                                );
+                                let _ = pg_dlq.route_to_dlq(&dlq_record);
+                                continue;
+                            }
+
+                            // 3. Watermark snapshot reconciliation
                             let processed_event = match watermark_engine.process_replication_event(&event) {
                                 Some(e) => e,
                                 None => continue,
@@ -123,19 +153,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             for mut_event in mutations {
-                                if let Ok(transformed) = pg_transformer.transform(mut_event) {
-                                    let _ = pg_kafka.send(&transformed).await;
-                                    let _ = pg_stdout.send(&transformed).await;
-                                    
-                                    let _ = pg_store.save_offset("postgres_users", &transformed.offset);
+                                match pg_transformer.transform(mut_event.clone()) {
+                                    Ok(transformed) => {
+                                        let _ = pg_kafka.send(&transformed).await;
+                                        let _ = pg_stdout.send(&transformed).await;
+                                        let _ = pg_store.save_offset("postgres_users", &transformed.offset);
 
-                                    // Record metrics: latency, lag, and throughput
-                                    let elapsed = processing_start.elapsed().as_secs_f64();
-                                    observability::record_processing_latency(elapsed);
-                                    observability::increment_throughput(1);
-                                    
-                                    let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
-                                    observability::record_replication_lag(lag);
+                                        let elapsed = processing_start.elapsed().as_secs_f64();
+                                        observability::record_processing_latency(elapsed);
+                                        observability::increment_throughput(1);
+                                        
+                                        let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
+                                        observability::record_replication_lag(lag);
+                                    }
+                                    Err(e) => {
+                                        let dlq_record = DlqRecord::new(
+                                            mut_event,
+                                            e.to_string(),
+                                            "WasmTransform".to_string(),
+                                            1,
+                                        );
+                                        let _ = pg_dlq.route_to_dlq(&dlq_record);
+                                    }
                                 }
                             }
                         }
@@ -158,6 +197,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cass_stdout = Arc::clone(&stdout_sink);
     let cass_kafka = Arc::clone(&kafka_sink);
     let cass_coord = Arc::clone(&coordinator);
+    let cass_dlq = Arc::clone(&dlq);
     
     let cass_handle = tokio::spawn(async move {
         println!("Waiting for Cassandra stream node leadership...");
@@ -184,18 +224,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             let mutations = tx_buffer.process(event);
                             for mut_event in mutations {
-                                if let Ok(transformed) = cass_transformer.transform(mut_event) {
-                                    let _ = cass_kafka.send(&transformed).await;
-                                    let _ = cass_stdout.send(&transformed).await;
-                                    let _ = cass_store.save_offset("cassandra_sensors", &transformed.offset);
+                                match cass_transformer.transform(mut_event.clone()) {
+                                    Ok(transformed) => {
+                                        let _ = cass_kafka.send(&transformed).await;
+                                        let _ = cass_stdout.send(&transformed).await;
+                                        let _ = cass_store.save_offset("cassandra_sensors", &transformed.offset);
 
-                                    // Record metrics
-                                    let elapsed = processing_start.elapsed().as_secs_f64();
-                                    observability::record_processing_latency(elapsed);
-                                    observability::increment_throughput(1);
-                                    
-                                    let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
-                                    observability::record_replication_lag(lag);
+                                        let elapsed = processing_start.elapsed().as_secs_f64();
+                                        observability::record_processing_latency(elapsed);
+                                        observability::increment_throughput(1);
+                                        
+                                        let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
+                                        observability::record_replication_lag(lag);
+                                    }
+                                    Err(e) => {
+                                        let dlq_record = DlqRecord::new(
+                                            mut_event,
+                                            e.to_string(),
+                                            "WasmTransform".to_string(),
+                                            1,
+                                        );
+                                        let _ = cass_dlq.route_to_dlq(&dlq_record);
+                                    }
                                 }
                             }
                         }
