@@ -13,11 +13,14 @@ mod snapshot;
 mod resiliency;
 mod observability;
 mod serialize;
+mod router;
 
 use source::{CdcSource, postgres::PostgresSource, cassandra::CassandraSource};
 use storage::StateStore;
 use storage::schema::{SchemaRegistry, SchemaCompatibility};
 use resiliency::dlq::{DeadLetterQueue, DlqRecord};
+use resiliency::rate_limiter::TokenBucketLimiter;
+use router::{PartitionRouter, PartitionStrategy};
 use sink::{CdcSink, stdout::StdoutSink, kafka::KafkaSink};
 use buffer::TransactionBuffer;
 use transform::{Transformer, WasmTransformer};
@@ -27,7 +30,7 @@ use resiliency::dedup::DeduplicationFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting Caminus CDC Engine (Phase 5 - Schema Evolution & DLQ Engine)...");
+    println!("Starting Caminus CDC Engine (Phase 6 - Multi-Tenant Router & Adaptive Backpressure)...");
 
     // Initialize Prometheus metrics scraper server on port 9000
     if let Err(e) = observability::init_metrics(9000) {
@@ -37,6 +40,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize distributed consensus coordinator (Node 1)
     let coordinator = Arc::new(ClusterCoordinator::new(1));
     coordinator.start_election_loop();
+
+    // Initialize adaptive token-bucket rate limiter for backpressure (capacity: 1000, 500 req/sec refill)
+    let rate_limiter = Arc::new(TokenBucketLimiter::new(1000, 500.0));
+
+    // Initialize multi-tenant partition router (4 partitions, KeyHash strategy)
+    let partition_router = Arc::new(PartitionRouter::new(4, PartitionStrategy::KeyHash));
 
     // Initialize state store directory
     let state_store_path = "./data/caminus_state";
@@ -95,6 +104,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pg_kafka = Arc::clone(&kafka_sink);
     let pg_coord = Arc::clone(&coordinator);
     let pg_dlq = Arc::clone(&dlq);
+    let pg_limiter = Arc::clone(&rate_limiter);
+    let pg_router = Arc::clone(&partition_router);
     
     let pg_handle = tokio::spawn(async move {
         println!("Waiting for PostgreSQL stream node leadership...");
@@ -113,16 +124,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
+                    // Acquire token bucket lease for rate-limiting backpressure
+                    pg_limiter.acquire(1).await;
+
                     let processing_start = std::time::Instant::now();
 
                     match event_result {
                         Ok(event) => {
-                            // 1. Deduplication check
                             if dedup_filter.check_and_track(&event.id) {
                                 continue;
                             }
 
-                            // 2. Schema compatibility validation
                             if let Err(e) = SchemaRegistry::validate_event(&pg_store, "postgres_users", &event) {
                                 let dlq_record = DlqRecord::new(
                                     event,
@@ -134,7 +146,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
 
-                            // 3. Watermark snapshot reconciliation
                             let processed_event = match watermark_engine.process_replication_event(&event) {
                                 Some(e) => e,
                                 None => continue,
@@ -155,6 +166,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             for mut_event in mutations {
                                 match pg_transformer.transform(mut_event.clone()) {
                                     Ok(transformed) => {
+                                        let target_partition = pg_router.resolve_partition(&transformed);
+                                        println!(
+                                            "[ROUTER] Event {} assigned to partition {}",
+                                            transformed.id, target_partition
+                                        );
+
                                         let _ = pg_kafka.send(&transformed).await;
                                         let _ = pg_stdout.send(&transformed).await;
                                         let _ = pg_store.save_offset("postgres_users", &transformed.offset);
@@ -198,6 +215,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cass_kafka = Arc::clone(&kafka_sink);
     let cass_coord = Arc::clone(&coordinator);
     let cass_dlq = Arc::clone(&dlq);
+    let cass_limiter = Arc::clone(&rate_limiter);
+    let cass_router = Arc::clone(&partition_router);
     
     let cass_handle = tokio::spawn(async move {
         println!("Waiting for Cassandra stream node leadership...");
@@ -214,6 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
+                    cass_limiter.acquire(1).await;
                     let processing_start = std::time::Instant::now();
 
                     match event_result {
@@ -226,6 +246,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             for mut_event in mutations {
                                 match cass_transformer.transform(mut_event.clone()) {
                                     Ok(transformed) => {
+                                        let target_partition = cass_router.resolve_partition(&transformed);
+                                        println!(
+                                            "[ROUTER] Cassandra Event {} assigned to partition {}",
+                                            transformed.id, target_partition
+                                        );
+
                                         let _ = cass_kafka.send(&transformed).await;
                                         let _ = cass_stdout.send(&transformed).await;
                                         let _ = cass_store.save_offset("cassandra_sensors", &transformed.offset);
