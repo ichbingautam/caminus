@@ -25,12 +25,13 @@ use sink::{CdcSink, stdout::StdoutSink, kafka::KafkaSink};
 use buffer::TransactionBuffer;
 use transform::{Transformer, WasmTransformer};
 use consensus::ClusterCoordinator;
+use consensus::failover::FailoverController;
 use snapshot::watermark::WatermarkSnapshotter;
 use resiliency::dedup::DeduplicationFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting Caminus CDC Engine (Phase 6 - Multi-Tenant Router & Adaptive Backpressure)...");
+    println!("Starting Caminus CDC Engine (Phase 7 - HA Failover & E2E Integration Benchmarks)...");
 
     // Initialize Prometheus metrics scraper server on port 9000
     if let Err(e) = observability::init_metrics(9000) {
@@ -40,6 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize distributed consensus coordinator (Node 1)
     let coordinator = Arc::new(ClusterCoordinator::new(1));
     coordinator.start_election_loop();
+
+    // Initialize HA failover controller (Node 1, 1000ms heartbeat threshold)
+    let failover_controller = Arc::new(FailoverController::new(1, 1000));
 
     // Initialize adaptive token-bucket rate limiter for backpressure (capacity: 1000, 500 req/sec refill)
     let rate_limiter = Arc::new(TokenBucketLimiter::new(1000, 500.0));
@@ -103,6 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pg_stdout = Arc::clone(&stdout_sink);
     let pg_kafka = Arc::clone(&kafka_sink);
     let pg_coord = Arc::clone(&coordinator);
+    let pg_failover = Arc::clone(&failover_controller);
     let pg_dlq = Arc::clone(&dlq);
     let pg_limiter = Arc::clone(&rate_limiter);
     let pg_router = Arc::clone(&partition_router);
@@ -114,7 +119,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut watermark_engine = WatermarkSnapshotter::new();
         let mut dedup_filter = DeduplicationFilter::new(1000);
 
-        let last_offset = pg_store.get_offset("postgres_users").unwrap_or(None);
+        // Resume from failover checkpoint offset if available
+        let last_offset = pg_failover.resume_checkpoint_offset(&pg_store, "postgres_users")
+            .or_else(|| pg_store.get_offset("postgres_users").unwrap_or(None));
         
         match pg_source.start_stream(last_offset).await {
             Ok(mut stream) => {
@@ -123,6 +130,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         continue;
                     }
+
+                    // Record leader heartbeat pulse
+                    pg_failover.record_heartbeat().await;
 
                     // Acquire token bucket lease for rate-limiting backpressure
                     pg_limiter.acquire(1).await;
@@ -214,6 +224,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cass_stdout = Arc::clone(&stdout_sink);
     let cass_kafka = Arc::clone(&kafka_sink);
     let cass_coord = Arc::clone(&coordinator);
+    let cass_failover = Arc::clone(&failover_controller);
     let cass_dlq = Arc::clone(&dlq);
     let cass_limiter = Arc::clone(&rate_limiter);
     let cass_router = Arc::clone(&partition_router);
@@ -223,7 +234,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         let mut tx_buffer = TransactionBuffer::new();
         let mut dedup_filter = DeduplicationFilter::new(1000);
-        let last_offset = cass_store.get_offset("cassandra_sensors").unwrap_or(None);
+        let last_offset = cass_failover.resume_checkpoint_offset(&cass_store, "cassandra_sensors")
+            .or_else(|| cass_store.get_offset("cassandra_sensors").unwrap_or(None));
 
         match cass_source.start_stream(last_offset).await {
             Ok(mut stream) => {
@@ -233,6 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
+                    cass_failover.record_heartbeat().await;
                     cass_limiter.acquire(1).await;
                     let processing_start = std::time::Instant::now();
 
