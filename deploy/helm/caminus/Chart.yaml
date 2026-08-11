@@ -1,0 +1,6 @@
+apiVersion: v2
+name: caminus
+description: High-performance, distributed Change Data Capture (CDC) engine written in Rust
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,6 @@
+target/
+.git/
+.cargo/
+data/
+*.log
+.gemini/
