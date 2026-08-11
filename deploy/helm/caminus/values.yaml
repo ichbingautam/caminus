@@ -1,0 +1,27 @@
+replicaCount: 2
+
+image:
+  repository: caminus
+  pullPolicy: IfNotPresent
+  tag: "0.1.0"
+
+service:
+  type: ClusterIP
+  port: 9000
+  targetPort: 9000
+
+prometheus:
+  enabled: true
+  path: /metrics
+  port: 9000
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+env:
+  RUST_LOG: info
