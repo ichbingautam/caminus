@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Caminus Architecture Documentation
+    url: https://github.com/ichbingautam/caminus/blob/main/docs/ARCHITECTURE.md
+    about: Read system architecture and design specifications before opening issues.
