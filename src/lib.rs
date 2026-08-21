@@ -11,3 +11,4 @@ pub mod serialize;
 pub mod router;
 pub mod cli;
 pub mod sync;
+pub mod security;
