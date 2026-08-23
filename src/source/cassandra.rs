@@ -1,8 +1,8 @@
 use super::{CdcSource, ChangeEvent, Operation};
-use futures_util::stream::{self, BoxStream, StreamExt};
-use std::time::Duration;
 use chrono::Utc;
+use futures_util::stream::{self, BoxStream, StreamExt};
 use serde_json::json;
+use std::time::Duration;
 
 pub struct CassandraSource {
     pub cdc_directory: String,
@@ -33,7 +33,9 @@ impl CdcSource for CassandraSource {
         let make_conn = || async {
             let attempt = ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if attempt < 2 {
-                Err(CassandraSourceError::DirectoryAccess("Simulated Cassandra CommitLog folder lock error".to_string()))
+                Err(CassandraSourceError::DirectoryAccess(
+                    "Simulated Cassandra CommitLog folder lock error".to_string(),
+                ))
             } else {
                 Ok(())
             }
@@ -45,7 +47,8 @@ impl CdcSource for CassandraSource {
             Duration::from_millis(50),
             2.0,
             Duration::from_millis(500),
-        ).await?;
+        )
+        .await?;
 
         // Bootstrap mock stream generator simulating Cassandra CommitLog parsing
         let start_pos = start_offset

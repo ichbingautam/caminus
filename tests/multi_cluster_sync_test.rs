@@ -1,10 +1,10 @@
 use chrono::Utc;
 use serde_json::json;
 
+use caminus::sink::CdcSink;
+use caminus::sink::forwarder::ClusterForwarderSink;
 use caminus::source::{ChangeEvent, Operation};
 use caminus::sync::SyncCoordinator;
-use caminus::sink::forwarder::ClusterForwarderSink;
-use caminus::sink::CdcSink;
 
 #[tokio::test]
 async fn test_active_active_multi_cluster_sync() {

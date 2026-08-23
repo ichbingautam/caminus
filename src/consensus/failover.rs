@@ -1,7 +1,7 @@
+use crate::storage::StateStore;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use crate::storage::StateStore;
 
 pub struct FailoverController {
     pub node_id: u64,
@@ -81,7 +81,9 @@ mod tests {
         let _ = fs::remove_dir_all(test_path);
         let store = StateStore::new(test_path).unwrap();
 
-        store.save_offset("pg_users", "offset-checkpoint-555").unwrap();
+        store
+            .save_offset("pg_users", "offset-checkpoint-555")
+            .unwrap();
 
         let controller = FailoverController::new(1, 1000);
         let resumed = controller.resume_checkpoint_offset(&store, "pg_users");

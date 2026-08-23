@@ -1,9 +1,9 @@
 use crate::source::ChangeEvent;
 use std::error::Error;
 
-pub mod stdout;
-pub mod kafka;
 pub mod forwarder;
+pub mod kafka;
+pub mod stdout;
 
 pub trait CdcSink: Send + Sync {
     type Error: Error + Send + Sync + 'static;

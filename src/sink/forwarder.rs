@@ -1,8 +1,8 @@
 use thiserror::Error;
 
+use crate::serialize::serialize_event;
 use crate::sink::CdcSink;
 use crate::source::ChangeEvent;
-use crate::serialize::serialize_event;
 
 #[derive(Debug, Error)]
 pub enum ForwarderSinkError {
@@ -30,12 +30,16 @@ impl CdcSink for ClusterForwarderSink {
     type Error = ForwarderSinkError;
 
     async fn send(&self, event: &ChangeEvent) -> Result<(), Self::Error> {
-        let serialized = serialize_event(event)
-            .map_err(|e| ForwarderSinkError::Serialization(e.to_string()))?;
+        let serialized =
+            serialize_event(event).map_err(|e| ForwarderSinkError::Serialization(e.to_string()))?;
 
         println!(
             "[CLUSTER FORWARDER] Forwarding change event {} ({}) to remote cluster '{}' at endpoint '{}' ({} bytes)",
-            event.id, event.source_table_or_collection, self.target_cluster_id, self.target_endpoint, serialized.len()
+            event.id,
+            event.source_table_or_collection,
+            self.target_cluster_id,
+            self.target_endpoint,
+            serialized.len()
         );
 
         Ok(())
@@ -45,9 +49,9 @@ impl CdcSink for ClusterForwarderSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::Operation;
     use chrono::Utc;
     use serde_json::json;
-    use crate::source::Operation;
 
     #[tokio::test]
     async fn test_cluster_forwarder_sink() {

@@ -16,7 +16,7 @@ impl DeduplicationFilter {
         }
     }
 
-    /// Returns true if the event_id is a duplicate (already processed), 
+    /// Returns true if the event_id is a duplicate (already processed),
     /// otherwise inserts it and returns false.
     pub fn check_and_track(&mut self, event_id: &str) -> bool {
         if self.processed_ids.contains(event_id) {
@@ -24,7 +24,7 @@ impl DeduplicationFilter {
         } else {
             self.processed_ids.insert(event_id.to_string());
             self.order.push_back(event_id.to_string());
-            
+
             // Limit cache memory growth via FIFO eviction
             if self.order.len() > self.max_capacity {
                 if let Some(oldest) = self.order.pop_front() {

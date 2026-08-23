@@ -1,7 +1,7 @@
 pub mod failover;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,18 +41,18 @@ impl ClusterCoordinator {
                 "[Consensus Node {}] Starting pure-Rust Raft-like election engine loop...",
                 node_id
             );
-            
+
             let mut role = StateRole::Follower;
             let mut term = 0;
             let election_timeout = Duration::from_millis(150 + (node_id * 50) % 150);
-            
+
             loop {
                 tokio::time::sleep(election_timeout).await;
                 if shutdown_clone.load(Ordering::Relaxed) {
                     println!("[Consensus Node {}] Election loop terminated.", node_id);
                     break;
                 }
-                
+
                 match role {
                     StateRole::Follower => {
                         // Follower election timeout triggered: transition to Candidate

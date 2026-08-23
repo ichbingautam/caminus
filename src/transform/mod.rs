@@ -1,6 +1,6 @@
 use crate::source::ChangeEvent;
-use wasmtime::*;
 use thiserror::Error;
+use wasmtime::*;
 
 #[derive(Error, Debug)]
 pub enum TransformError {
@@ -40,11 +40,11 @@ impl Transformer for WasmTransformer {
         let alloc = instance
             .get_typed_func::<i32, i32>(&mut store, "alloc")
             .map_err(|_| TransformError::MissingExport("alloc".to_string()))?;
-            
+
         let transform_fn = instance
             .get_typed_func::<(i32, i32), i32>(&mut store, "transform")
             .map_err(|_| TransformError::MissingExport("transform".to_string()))?;
-            
+
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| TransformError::Wasm(wasmtime::Error::msg("Missing memory export")))?;
@@ -110,7 +110,10 @@ mod tests {
 
         let transformed = transformer.transform(event.clone()).unwrap();
         assert_eq!(transformed.id, event.id);
-        assert_eq!(transformed.source_table_or_collection, event.source_table_or_collection);
+        assert_eq!(
+            transformed.source_table_or_collection,
+            event.source_table_or_collection
+        );
     }
 
     #[test]
