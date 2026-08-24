@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 pub static EVENTS_INGESTED: AtomicU64 = AtomicU64::new(0);
 pub static EVENTS_PROCESSED: AtomicU64 = AtomicU64::new(0);
@@ -78,7 +78,7 @@ impl MetricsRegistry {
                         tokio::spawn(async move {
                             let mut buf = [0; 1024];
                             let _ = socket.read(&mut buf).await;
-                            
+
                             let metrics_data = Self::render();
                             let response = format!(
                                 "HTTP/1.1 200 OK\r\n\
@@ -137,7 +137,10 @@ mod tests {
 
         // Make HTTP request
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-        stream.write_all(b"GET /metrics HTTP/1.1\r\n\r\n").await.unwrap();
+        stream
+            .write_all(b"GET /metrics HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
         stream.flush().await.unwrap();
 
         let mut resp = String::new();

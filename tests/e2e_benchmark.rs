@@ -1,17 +1,17 @@
+use chrono::Utc;
+use serde_json::json;
 use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
-use chrono::Utc;
-use serde_json::json;
 
-use caminus::source::{ChangeEvent, Operation};
-use caminus::storage::StateStore;
-use caminus::storage::schema::{SchemaRegistry, SchemaCompatibility};
 use caminus::resiliency::dedup::DeduplicationFilter;
 use caminus::resiliency::rate_limiter::TokenBucketLimiter;
 use caminus::router::{PartitionRouter, PartitionStrategy};
 use caminus::serialize::serialize_event;
 use caminus::sink::{CdcSink, stdout::StdoutSink};
+use caminus::source::{ChangeEvent, Operation};
+use caminus::storage::StateStore;
+use caminus::storage::schema::{SchemaCompatibility, SchemaRegistry};
 
 #[tokio::test]
 async fn test_high_throughput_e2e_pipeline() {

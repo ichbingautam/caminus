@@ -1,12 +1,10 @@
-use std::net::SocketAddr;
 use metrics_exporter_prometheus::PrometheusBuilder;
+use std::net::SocketAddr;
 
 pub fn init_metrics(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let builder = PrometheusBuilder::new();
-    builder
-        .with_http_listener(addr)
-        .install()?;
+    builder.with_http_listener(addr).install()?;
     println!("[Metrics Server] Listening on http://{}", addr);
     Ok(())
 }

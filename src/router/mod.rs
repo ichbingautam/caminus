@@ -1,7 +1,7 @@
+use crate::source::ChangeEvent;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use serde::{Serialize, Deserialize};
-use crate::source::ChangeEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PartitionStrategy {
@@ -38,7 +38,8 @@ impl PartitionRouter {
                 (hash_val % (self.num_partitions as u64)) as u32
             }
             PartitionStrategy::TenantPrefix => {
-                let tenant_id = event.after
+                let tenant_id = event
+                    .after
                     .as_ref()
                     .and_then(|a| a.get("tenant_id"))
                     .and_then(|t| t.as_str())
@@ -63,8 +64,8 @@ impl PartitionRouter {
 mod tests {
     use super::*;
     use crate::source::Operation;
-    use serde_json::json;
     use chrono::Utc;
+    use serde_json::json;
 
     #[test]
     fn test_key_hash_partitioning() {

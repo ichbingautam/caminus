@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::source::{ChangeEvent, Operation};
+use std::collections::HashMap;
 
 pub struct WatermarkSnapshotter {
     active_chunk: HashMap<String, ChangeEvent>,
@@ -42,7 +42,9 @@ impl WatermarkSnapshotter {
                     // High watermark marker
                     self.in_watermark_window = false;
                     self.active_tx = None;
-                    println!("[Watermark Engine] High watermark reached. Reconciled snapshot chunk ready.");
+                    println!(
+                        "[Watermark Engine] High watermark reached. Reconciled snapshot chunk ready."
+                    );
                 }
             }
             return None; // Filter watermark rows out from downstream targets

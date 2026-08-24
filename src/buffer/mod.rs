@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::source::{ChangeEvent, Operation};
+use std::collections::HashMap;
 
 pub struct TransactionBuffer {
     buffer: HashMap<String, Vec<ChangeEvent>>,
@@ -38,7 +38,10 @@ impl TransactionBuffer {
                     _ => {
                         // Regular mutation (Create, Update, Delete, Snapshot) inside a transaction.
                         // Buffer it and return nothing.
-                        self.buffer.entry(tx_id.clone()).or_insert_with(Vec::new).push(event);
+                        self.buffer
+                            .entry(tx_id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(event);
                         vec![]
                     }
                 }

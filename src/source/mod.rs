@@ -1,11 +1,11 @@
-use std::error::Error;
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use futures_util::stream::BoxStream;
+use serde::{Deserialize, Serialize};
+use std::error::Error;
 use std::time::Duration;
 
-pub mod postgres;
 pub mod cassandra;
+pub mod postgres;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Operation {
@@ -38,7 +38,7 @@ pub trait CdcSource: Send + Sync {
         &self,
         start_offset: Option<String>,
     ) -> impl std::future::Future<
-        Output = Result<BoxStream<'static, Result<ChangeEvent, Self::Error>>, Self::Error>
+        Output = Result<BoxStream<'static, Result<ChangeEvent, Self::Error>>, Self::Error>,
     > + Send;
 }
 

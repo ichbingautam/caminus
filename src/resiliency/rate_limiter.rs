@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 pub struct TokenBucketLimiter {
     capacity: u32,
@@ -27,7 +27,7 @@ impl TokenBucketLimiter {
 
             let now = Instant::now();
             let elapsed_secs = now.duration_since(*last_refill).as_secs_f64();
-            
+
             let new_tokens = *tokens + (elapsed_secs * self.refill_rate_per_sec);
             *tokens = new_tokens.min(self.capacity as f64);
             *last_refill = now;
@@ -58,7 +58,7 @@ mod tests {
         let start = Instant::now();
         limiter.acquire(5).await;
         limiter.acquire(5).await;
-        
+
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(50));
     }

@@ -1,5 +1,5 @@
-use std::path::Path;
 use rocksdb::{DB, Options};
+use std::path::Path;
 use thiserror::Error;
 
 pub mod schema;
@@ -43,7 +43,11 @@ impl StateStore {
         }
     }
 
-    pub fn save_schema(&self, source_id: &str, schema: &serde_json::Value) -> Result<(), StorageError> {
+    pub fn save_schema(
+        &self,
+        source_id: &str,
+        schema: &serde_json::Value,
+    ) -> Result<(), StorageError> {
         let key = format!("schema:{}", source_id);
         let serialized = serde_json::to_vec(schema)?;
         self.db.put(key.as_bytes(), serialized)?;
@@ -77,7 +81,10 @@ mod tests {
 
         // Test offset
         store.save_offset("pg_users", "offset-99").unwrap();
-        assert_eq!(store.get_offset("pg_users").unwrap(), Some("offset-99".to_string()));
+        assert_eq!(
+            store.get_offset("pg_users").unwrap(),
+            Some("offset-99".to_string())
+        );
         assert_eq!(store.get_offset("unknown").unwrap(), None);
 
         // Test schema

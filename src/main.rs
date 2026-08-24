@@ -1,33 +1,33 @@
-use std::sync::Arc;
-use tokio::signal;
 use futures_util::StreamExt;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::signal;
 
+mod buffer;
+mod consensus;
+mod observability;
+mod resiliency;
+mod router;
+mod serialize;
+mod sink;
+mod snapshot;
 mod source;
 mod storage;
-mod sink;
-mod buffer;
 mod transform;
-mod consensus;
-mod snapshot;
-mod resiliency;
-mod observability;
-mod serialize;
-mod router;
 
-use source::{CdcSource, postgres::PostgresSource, cassandra::CassandraSource};
-use storage::StateStore;
-use storage::schema::{SchemaRegistry, SchemaCompatibility};
+use buffer::TransactionBuffer;
+use consensus::ClusterCoordinator;
+use consensus::failover::FailoverController;
+use resiliency::dedup::DeduplicationFilter;
 use resiliency::dlq::{DeadLetterQueue, DlqRecord};
 use resiliency::rate_limiter::TokenBucketLimiter;
 use router::{PartitionRouter, PartitionStrategy};
-use sink::{CdcSink, stdout::StdoutSink, kafka::KafkaSink};
-use buffer::TransactionBuffer;
-use transform::{Transformer, WasmTransformer};
-use consensus::ClusterCoordinator;
-use consensus::failover::FailoverController;
+use sink::{CdcSink, kafka::KafkaSink, stdout::StdoutSink};
 use snapshot::watermark::WatermarkSnapshotter;
-use resiliency::dedup::DeduplicationFilter;
+use source::{CdcSource, cassandra::CassandraSource, postgres::PostgresSource};
+use storage::StateStore;
+use storage::schema::{SchemaCompatibility, SchemaRegistry};
+use transform::{Transformer, WasmTransformer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,7 +35,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Prometheus metrics scraper server on port 9000
     if let Err(e) = observability::init_metrics(9000) {
-        eprintln!("[Metrics Server] Failed to initialize metrics exporter: {:?}", e);
+        eprintln!(
+            "[Metrics Server] Failed to initialize metrics exporter: {:?}",
+            e
+        );
     }
 
     // Initialize distributed consensus coordinator (Node 1)
@@ -63,7 +66,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "name": "string"
         }
     });
-    if let Err(e) = SchemaRegistry::register_schema(&state_store, "postgres_users", user_schema, SchemaCompatibility::Backward) {
+    if let Err(e) = SchemaRegistry::register_schema(
+        &state_store,
+        "postgres_users",
+        user_schema,
+        SchemaCompatibility::Backward,
+    ) {
         eprintln!("Failed to register initial schema: {:?}", e);
     }
 
@@ -111,18 +119,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pg_dlq = Arc::clone(&dlq);
     let pg_limiter = Arc::clone(&rate_limiter);
     let pg_router = Arc::clone(&partition_router);
-    
+
     let pg_handle = tokio::spawn(async move {
         println!("Waiting for PostgreSQL stream node leadership...");
-        
+
         let mut tx_buffer = TransactionBuffer::new();
         let mut watermark_engine = WatermarkSnapshotter::new();
         let mut dedup_filter = DeduplicationFilter::new(1000);
 
         // Resume from failover checkpoint offset if available
-        let last_offset = pg_failover.resume_checkpoint_offset(&pg_store, "postgres_users")
+        let last_offset = pg_failover
+            .resume_checkpoint_offset(&pg_store, "postgres_users")
             .or_else(|| pg_store.get_offset("postgres_users").unwrap_or(None));
-        
+
         match pg_source.start_stream(last_offset).await {
             Ok(mut stream) => {
                 while let Some(event_result) = stream.next().await {
@@ -145,7 +154,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
 
-                            if let Err(e) = SchemaRegistry::validate_event(&pg_store, "postgres_users", &event) {
+                            if let Err(e) =
+                                SchemaRegistry::validate_event(&pg_store, "postgres_users", &event)
+                            {
                                 let dlq_record = DlqRecord::new(
                                     event,
                                     e.to_string(),
@@ -156,27 +167,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
 
-                            let processed_event = match watermark_engine.process_replication_event(&event) {
-                                Some(e) => e,
-                                None => continue,
-                            };
+                            let processed_event =
+                                match watermark_engine.process_replication_event(&event) {
+                                    Some(e) => e,
+                                    None => continue,
+                                };
 
                             let raw_op = processed_event.operation.clone();
                             let raw_tx = processed_event.transaction_id.clone();
-                            
+
                             let mutations = tx_buffer.process(processed_event);
-                            
+
                             if raw_op == source::Operation::Commit {
                                 println!(
                                     "[PG Source] Received COMMIT for transaction {:?}. Flushing {} mutations...",
-                                    raw_tx, mutations.len()
+                                    raw_tx,
+                                    mutations.len()
                                 );
                             }
 
                             for mut_event in mutations {
                                 match pg_transformer.transform(mut_event.clone()) {
                                     Ok(transformed) => {
-                                        let target_partition = pg_router.resolve_partition(&transformed);
+                                        let target_partition =
+                                            pg_router.resolve_partition(&transformed);
                                         println!(
                                             "[ROUTER] Event {} assigned to partition {}",
                                             transformed.id, target_partition
@@ -184,13 +198,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                         let _ = pg_kafka.send(&transformed).await;
                                         let _ = pg_stdout.send(&transformed).await;
-                                        let _ = pg_store.save_offset("postgres_users", &transformed.offset);
+                                        let _ = pg_store
+                                            .save_offset("postgres_users", &transformed.offset);
 
                                         let elapsed = processing_start.elapsed().as_secs_f64();
                                         observability::record_processing_latency(elapsed);
                                         observability::increment_throughput(1);
-                                        
-                                        let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
+
+                                        let lag = (chrono::Utc::now() - transformed.timestamp)
+                                            .num_milliseconds()
+                                            as f64
+                                            / 1000.0;
                                         observability::record_replication_lag(lag);
                                     }
                                     Err(e) => {
@@ -228,13 +246,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cass_dlq = Arc::clone(&dlq);
     let cass_limiter = Arc::clone(&rate_limiter);
     let cass_router = Arc::clone(&partition_router);
-    
+
     let cass_handle = tokio::spawn(async move {
         println!("Waiting for Cassandra stream node leadership...");
-        
+
         let mut tx_buffer = TransactionBuffer::new();
         let mut dedup_filter = DeduplicationFilter::new(1000);
-        let last_offset = cass_failover.resume_checkpoint_offset(&cass_store, "cassandra_sensors")
+        let last_offset = cass_failover
+            .resume_checkpoint_offset(&cass_store, "cassandra_sensors")
             .or_else(|| cass_store.get_offset("cassandra_sensors").unwrap_or(None));
 
         match cass_source.start_stream(last_offset).await {
@@ -259,7 +278,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             for mut_event in mutations {
                                 match cass_transformer.transform(mut_event.clone()) {
                                     Ok(transformed) => {
-                                        let target_partition = cass_router.resolve_partition(&transformed);
+                                        let target_partition =
+                                            cass_router.resolve_partition(&transformed);
                                         println!(
                                             "[ROUTER] Cassandra Event {} assigned to partition {}",
                                             transformed.id, target_partition
@@ -267,13 +287,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                         let _ = cass_kafka.send(&transformed).await;
                                         let _ = cass_stdout.send(&transformed).await;
-                                        let _ = cass_store.save_offset("cassandra_sensors", &transformed.offset);
+                                        let _ = cass_store
+                                            .save_offset("cassandra_sensors", &transformed.offset);
 
                                         let elapsed = processing_start.elapsed().as_secs_f64();
                                         observability::record_processing_latency(elapsed);
                                         observability::increment_throughput(1);
-                                        
-                                        let lag = (chrono::Utc::now() - transformed.timestamp).num_milliseconds() as f64 / 1000.0;
+
+                                        let lag = (chrono::Utc::now() - transformed.timestamp)
+                                            .num_milliseconds()
+                                            as f64
+                                            / 1000.0;
                                         observability::record_replication_lag(lag);
                                     }
                                     Err(e) => {

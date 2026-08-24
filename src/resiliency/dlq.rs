@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use crate::source::ChangeEvent;
 use crate::serialize;
+use crate::source::ChangeEvent;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlqRecord {
@@ -13,7 +13,12 @@ pub struct DlqRecord {
 }
 
 impl DlqRecord {
-    pub fn new(event: ChangeEvent, error_reason: String, failed_step: String, retry_attempts: u32) -> Self {
+    pub fn new(
+        event: ChangeEvent,
+        error_reason: String,
+        failed_step: String,
+        retry_attempts: u32,
+    ) -> Self {
         Self {
             failed_event: event,
             error_reason,
@@ -40,7 +45,11 @@ impl DeadLetterQueue {
 
         println!(
             "[DEAD LETTER QUEUE] Poison pill routed to '{}' | Step: {} | Retries: {} | Reason: {} | Event Payload: {}",
-            self.dlq_topic_or_path, record.failed_step, record.retry_attempts, record.error_reason, serialized
+            self.dlq_topic_or_path,
+            record.failed_step,
+            record.retry_attempts,
+            record.error_reason,
+            serialized
         );
 
         Ok(())

@@ -20,7 +20,11 @@ impl SyncCoordinator {
         }
     }
 
-    pub fn register_peer(&mut self, cluster_id: impl Into<String>, endpoint_url: impl Into<String>) {
+    pub fn register_peer(
+        &mut self,
+        cluster_id: impl Into<String>,
+        endpoint_url: impl Into<String>,
+    ) {
         self.remote_peers.push(ClusterNode {
             cluster_id: cluster_id.into(),
             endpoint_url: endpoint_url.into(),
@@ -39,7 +43,11 @@ impl SyncCoordinator {
     }
 
     /// Resolves concurrent mutation conflicts using Last-Write-Wins (LWW) timestamp ordering.
-    pub fn resolve_conflict<'a>(&self, event_a: &'a ChangeEvent, event_b: &'a ChangeEvent) -> &'a ChangeEvent {
+    pub fn resolve_conflict<'a>(
+        &self,
+        event_a: &'a ChangeEvent,
+        event_b: &'a ChangeEvent,
+    ) -> &'a ChangeEvent {
         if event_a.timestamp >= event_b.timestamp {
             event_a
         } else {
@@ -51,9 +59,9 @@ impl SyncCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::Operation;
     use chrono::Utc;
     use serde_json::json;
-    use crate::source::Operation;
 
     #[test]
     fn test_sync_coordinator_loop_suppression() {

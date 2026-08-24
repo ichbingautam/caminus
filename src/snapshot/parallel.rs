@@ -1,7 +1,7 @@
+use crate::source::ChangeEvent;
+use crate::storage::StateStore;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::storage::StateStore;
-use crate::source::ChangeEvent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChunkStatus {
@@ -47,8 +47,12 @@ impl ParallelSnapshotter {
         }
     }
 
-    pub async fn process_chunks<F, Fut>(&self, store: &StateStore, worker_count: usize, process_fn: F)
-    where
+    pub async fn process_chunks<F, Fut>(
+        &self,
+        store: &StateStore,
+        worker_count: usize,
+        process_fn: F,
+    ) where
         F: Fn(ChunkRange) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Vec<ChangeEvent>> + Send,
     {
@@ -104,7 +108,10 @@ impl ParallelSnapshotter {
 
         // Save progress to state store
         let chunks = self.chunks.lock().await;
-        let completed_count = chunks.iter().filter(|c| c.status == ChunkStatus::Completed).count();
+        let completed_count = chunks
+            .iter()
+            .filter(|c| c.status == ChunkStatus::Completed)
+            .count();
         let _ = store.save_offset(
             &format!("{}_snapshot_progress", self.table_name),
             &format!("{}/{}", completed_count, chunks.len()),
@@ -135,10 +142,12 @@ mod tests {
         let store = StateStore::new(test_path).unwrap();
 
         let snapshotter = ParallelSnapshotter::new("users", 200, 50);
-        snapshotter.process_chunks(&store, 2, |chunk| async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            Vec::new()
-        }).await;
+        snapshotter
+            .process_chunks(&store, 2, |chunk| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                Vec::new()
+            })
+            .await;
 
         let progress = store.get_offset("users_snapshot_progress").unwrap();
         assert_eq!(progress, Some("4/4".to_string()));

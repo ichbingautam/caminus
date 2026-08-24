@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
-use serde_json::Value;
-use thiserror::Error;
 use crate::source::ChangeEvent;
 use crate::storage::{StateStore, StorageError};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SchemaCompatibility {
@@ -49,13 +49,19 @@ impl SchemaRegistry {
             return Ok(());
         }
 
-        let old_fields = old_schema.get("fields")
+        let old_fields = old_schema
+            .get("fields")
             .and_then(|f| f.as_object())
-            .ok_or_else(|| SchemaError::Incompatibility("Old schema missing 'fields' object".to_string()))?;
+            .ok_or_else(|| {
+                SchemaError::Incompatibility("Old schema missing 'fields' object".to_string())
+            })?;
 
-        let new_fields = new_schema.get("fields")
+        let new_fields = new_schema
+            .get("fields")
             .and_then(|f| f.as_object())
-            .ok_or_else(|| SchemaError::Incompatibility("New schema missing 'fields' object".to_string()))?;
+            .ok_or_else(|| {
+                SchemaError::Incompatibility("New schema missing 'fields' object".to_string())
+            })?;
 
         // 1. Check for type changes in common fields
         for (field_name, old_type_val) in old_fields {
@@ -130,25 +136,36 @@ impl SchemaRegistry {
             None => return Ok(()), // No schema registered, skip validation
         };
 
-        let fields = schema.get("fields")
+        let fields = schema
+            .get("fields")
             .and_then(|f| f.as_object())
-            .ok_or_else(|| SchemaError::Validation("Registered schema missing 'fields' object".to_string()))?;
+            .ok_or_else(|| {
+                SchemaError::Validation("Registered schema missing 'fields' object".to_string())
+            })?;
 
         // Only validate payloads for Create and Update mutations
-        if event.operation != crate::source::Operation::Create && event.operation != crate::source::Operation::Update {
+        if event.operation != crate::source::Operation::Create
+            && event.operation != crate::source::Operation::Update
+        {
             return Ok(());
         }
 
         if let Some(payload) = &event.after {
-            let payload_obj = payload.as_object()
-                .ok_or_else(|| SchemaError::Validation("Event payload is not a JSON object".to_string()))?;
+            let payload_obj = payload.as_object().ok_or_else(|| {
+                SchemaError::Validation("Event payload is not a JSON object".to_string())
+            })?;
 
             for (field_name, type_val) in fields {
-                let expected_type = type_val.as_str()
-                    .ok_or_else(|| SchemaError::Validation(format!("Schema type for '{}' is not a string", field_name)))?;
+                let expected_type = type_val.as_str().ok_or_else(|| {
+                    SchemaError::Validation(format!(
+                        "Schema type for '{}' is not a string",
+                        field_name
+                    ))
+                })?;
 
-                let val = payload_obj.get(field_name)
-                    .ok_or_else(|| SchemaError::Validation(format!("Missing required field '{}'", field_name)))?;
+                let val = payload_obj.get(field_name).ok_or_else(|| {
+                    SchemaError::Validation(format!("Missing required field '{}'", field_name))
+                })?;
 
                 match expected_type {
                     "integer" => {
@@ -193,7 +210,9 @@ impl SchemaRegistry {
             }
             Ok(())
         } else {
-            Err(SchemaError::Validation("Event payload 'after' is missing".to_string()))
+            Err(SchemaError::Validation(
+                "Event payload 'after' is missing".to_string(),
+            ))
         }
     }
 }
@@ -201,9 +220,9 @@ impl SchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use serde_json::json;
     use chrono::Utc;
+    use serde_json::json;
+    use std::fs;
 
     #[test]
     fn test_schema_registration_and_validation() {
@@ -220,7 +239,13 @@ mod tests {
         });
 
         // Register initial schema
-        SchemaRegistry::register_schema(&store, "pg_users", schema.clone(), SchemaCompatibility::None).unwrap();
+        SchemaRegistry::register_schema(
+            &store,
+            "pg_users",
+            schema.clone(),
+            SchemaCompatibility::None,
+        )
+        .unwrap();
 
         // Valid event
         let event = ChangeEvent {
@@ -271,7 +296,14 @@ mod tests {
                 "email": "string"
             }
         });
-        assert!(SchemaRegistry::check_compatibility(&old_schema, &new_schema_add, SchemaCompatibility::Backward).is_ok());
+        assert!(
+            SchemaRegistry::check_compatibility(
+                &old_schema,
+                &new_schema_add,
+                SchemaCompatibility::Backward
+            )
+            .is_ok()
+        );
 
         // Backward incompatible: Deleting a field is not allowed
         let new_schema_del = json!({
@@ -279,16 +311,51 @@ mod tests {
                 "id": "integer"
             }
         });
-        assert!(SchemaRegistry::check_compatibility(&old_schema, &new_schema_del, SchemaCompatibility::Backward).is_err());
+        assert!(
+            SchemaRegistry::check_compatibility(
+                &old_schema,
+                &new_schema_del,
+                SchemaCompatibility::Backward
+            )
+            .is_err()
+        );
 
         // 2. Forward compatible: Deleting a field is allowed
-        assert!(SchemaRegistry::check_compatibility(&old_schema, &new_schema_del, SchemaCompatibility::Forward).is_ok());
+        assert!(
+            SchemaRegistry::check_compatibility(
+                &old_schema,
+                &new_schema_del,
+                SchemaCompatibility::Forward
+            )
+            .is_ok()
+        );
 
         // Forward incompatible: Adding a field is not allowed
-        assert!(SchemaRegistry::check_compatibility(&old_schema, &new_schema_add, SchemaCompatibility::Forward).is_err());
+        assert!(
+            SchemaRegistry::check_compatibility(
+                &old_schema,
+                &new_schema_add,
+                SchemaCompatibility::Forward
+            )
+            .is_err()
+        );
 
         // 3. Full compatibility
-        assert!(SchemaRegistry::check_compatibility(&old_schema, &old_schema, SchemaCompatibility::Full).is_ok());
-        assert!(SchemaRegistry::check_compatibility(&old_schema, &new_schema_add, SchemaCompatibility::Full).is_err());
+        assert!(
+            SchemaRegistry::check_compatibility(
+                &old_schema,
+                &old_schema,
+                SchemaCompatibility::Full
+            )
+            .is_ok()
+        );
+        assert!(
+            SchemaRegistry::check_compatibility(
+                &old_schema,
+                &new_schema_add,
+                SchemaCompatibility::Full
+            )
+            .is_err()
+        );
     }
 }
