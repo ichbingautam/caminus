@@ -1,15 +1,14 @@
 use chrono::Utc;
 use serde_json::json;
 
-use caminus::source::{ChangeEvent, Operation};
-use caminus::security::{PayloadSecurityEngine, MaskingRule};
 use caminus::security::kms::KmsProvider;
+use caminus::security::{MaskingRule, PayloadSecurityEngine};
+use caminus::source::{ChangeEvent, Operation};
 
 #[test]
 fn test_end_to_end_payload_security_and_key_rotation() {
     let kms = KmsProvider::new(b"initial-32-byte-master-key-v1!!");
-    let mut engine = PayloadSecurityEngine::new()
-        .with_kms(kms);
+    let mut engine = PayloadSecurityEngine::new().with_kms(kms);
 
     engine.add_rule("ssn", MaskingRule::Redact);
     engine.add_rule("email", MaskingRule::Hash);
@@ -39,6 +38,11 @@ fn test_end_to_end_payload_security_and_key_rotation() {
 
     assert_eq!(after_v1["ssn"], "[REDACTED]");
     assert_ne!(after_v1["email"], "john@domain.com");
-    assert!(after_v1["credit_card"].as_str().unwrap().starts_with("ENC:v1:"));
+    assert!(
+        after_v1["credit_card"]
+            .as_str()
+            .unwrap()
+            .starts_with("ENC:v1:")
+    );
     assert_eq!(after_v1["owner"], "John Doe");
 }
