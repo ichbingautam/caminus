@@ -2,6 +2,7 @@ use rocksdb::{DB, Options};
 use std::path::Path;
 use thiserror::Error;
 
+pub mod confluent;
 pub mod schema;
 
 #[derive(Error, Debug)]

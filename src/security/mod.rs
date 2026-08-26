@@ -1,9 +1,9 @@
 pub mod kms;
 
-use std::collections::HashMap;
-use serde_json::Value;
 use crate::source::ChangeEvent;
 use kms::KmsProvider;
+use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaskingRule {
@@ -71,9 +71,15 @@ impl PayloadSecurityEngine {
                             if let Some(kms) = &self.kms_provider {
                                 let (version, key) = kms.get_active_key();
                                 let raw_str = val.to_string();
-                                let hex_key: String = key.iter().map(|b| format!("{:02x}", b)).collect();
-                                let hex_data: String = raw_str.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-                                let encrypted = format!("ENC:v{}:{}:{}", version, hex_key, hex_data);
+                                let hex_key: String =
+                                    key.iter().map(|b| format!("{:02x}", b)).collect();
+                                let hex_data: String = raw_str
+                                    .as_bytes()
+                                    .iter()
+                                    .map(|b| format!("{:02x}", b))
+                                    .collect();
+                                let encrypted =
+                                    format!("ENC:v{}:{}:{}", version, hex_key, hex_data);
                                 *val = Value::String(encrypted);
                             } else if let Value::String(_) = val {
                                 *val = Value::String("[ENCRYPTED_WITHOUT_KMS]".to_string());
@@ -89,9 +95,9 @@ impl PayloadSecurityEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::Operation;
     use chrono::Utc;
     use serde_json::json;
-    use crate::source::Operation;
 
     #[test]
     fn test_payload_security_redact_and_hash() {

@@ -1,6 +1,8 @@
 use crate::source::ChangeEvent;
 use thiserror::Error;
 
+pub mod avro;
+
 #[derive(Error, Debug)]
 pub enum SerializationError {
     #[error("simd-json serialization error: {0}")]

@@ -64,6 +64,9 @@ mod tests {
         assert_eq!(ver_act, 2);
         assert_eq!(key_act, b"secret-key-v2-32-bytes-long-key!");
 
-        assert_eq!(kms.get_key_by_version(1), Some(b"secret-key-v1-32-bytes-long-key!".to_vec()));
+        assert_eq!(
+            kms.get_key_by_version(1),
+            Some(b"secret-key-v1-32-bytes-long-key!".to_vec())
+        );
     }
 }
