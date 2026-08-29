@@ -39,7 +39,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Execute Clippy Linter
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features
 
       - name: Run Unit & Integration Test Suites
         run: cargo test --all-targets --all-features

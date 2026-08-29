@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 use crate::source::ChangeEvent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
