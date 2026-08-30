@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 use crate::source::ChangeEvent;
 use crate::storage::{StateStore, StorageError};
 use serde::{Deserialize, Serialize};
