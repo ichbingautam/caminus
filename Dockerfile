@@ -1,5 +1,5 @@
 # Stage 1: Multi-stage Rust release builder
-FROM rust:1.80-slim-bookworm AS builder
+FROM rust:slim-bookworm AS builder
 
 WORKDIR /usr/src/caminus
 
