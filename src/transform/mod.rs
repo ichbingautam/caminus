@@ -18,6 +18,10 @@ pub trait Transformer: Send + Sync {
     fn transform(&self, event: ChangeEvent) -> Result<ChangeEvent, TransformError>;
 }
 
+pub mod registry;
+
+pub type WasmTransformEngine = WasmTransformer;
+
 pub struct WasmTransformer {
     engine: Engine,
     module: Module,
