@@ -1,3 +1,4 @@
+use crate::resiliency::rate_limiter::TenantQuotaLimiter;
 use crate::source::ChangeEvent;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -56,6 +57,46 @@ impl PartitionRouter {
                 let hash_val = hasher.finish();
                 (hash_val % (self.num_partitions as u64)) as u32
             }
+        }
+    }
+}
+
+pub struct TenantRouter {
+    pub router: PartitionRouter,
+    pub quota_limiter: TenantQuotaLimiter,
+}
+
+impl TenantRouter {
+    pub fn new(num_partitions: u32, default_quota_capacity: u32, default_refill_rate: f64) -> Self {
+        Self {
+            router: PartitionRouter::new(num_partitions, PartitionStrategy::TenantPrefix),
+            quota_limiter: TenantQuotaLimiter::new(default_quota_capacity, default_refill_rate),
+        }
+    }
+
+    pub fn set_tenant_quota(
+        &self,
+        tenant_id: impl Into<String>,
+        capacity: u32,
+        refill_rate_per_sec: f64,
+    ) {
+        self.quota_limiter
+            .set_tenant_quota(tenant_id, capacity, refill_rate_per_sec);
+    }
+
+    /// Resolves target partition index and evaluates tenant rate quota. Returns Some(partition) if allowed, None if quota exceeded.
+    pub async fn route_event(&self, event: &ChangeEvent) -> Option<u32> {
+        let tenant_id = event
+            .after
+            .as_ref()
+            .and_then(|a| a.get("tenant_id"))
+            .and_then(|t| t.as_str())
+            .unwrap_or(&event.source_database);
+
+        if self.quota_limiter.try_allow(tenant_id).await {
+            Some(self.router.resolve_partition(event))
+        } else {
+            None
         }
     }
 }
