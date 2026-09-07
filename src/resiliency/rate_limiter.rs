@@ -109,6 +109,16 @@ impl TenantQuotaLimiter {
             limiter.try_acquire(1).await
         }
     }
+
+    pub fn tenant_count(&self) -> usize {
+        let lock = self.tenant_limiters.read().unwrap();
+        lock.len()
+    }
+
+    pub fn has_tenant_quota(&self, tenant_id: &str) -> bool {
+        let lock = self.tenant_limiters.read().unwrap();
+        lock.contains_key(tenant_id)
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +141,8 @@ mod tests {
     async fn test_tenant_quota_limiter() {
         let quota_limiter = TenantQuotaLimiter::new(2, 10.0);
         quota_limiter.set_tenant_quota("tenant-A", 1, 1.0);
+        assert!(quota_limiter.has_tenant_quota("tenant-A"));
+        assert_eq!(quota_limiter.tenant_count(), 1);
 
         // tenant-A quota capacity is 1
         assert!(quota_limiter.try_allow("tenant-A").await);
@@ -140,5 +152,6 @@ mod tests {
         assert!(quota_limiter.try_allow("tenant-B").await);
         assert!(quota_limiter.try_allow("tenant-B").await);
         assert!(!quota_limiter.try_allow("tenant-B").await);
+        assert_eq!(quota_limiter.tenant_count(), 2);
     }
 }
