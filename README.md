@@ -10,9 +10,8 @@
 
 - **Pure-Rust Active-Standby Consensus**: Distributed Raft-like election engine for high-availability leader lease coordination.
 - **Lock-Free DBLog Watermark Snapshotting**: Netflix DBLog algorithm interleaving table snapshot queries with live stream replication without locking tables.
-- **WASM Single Message Transforms (SMTs)**: Sandboxed, high-speed WebAssembly inline transformations powered by Wasmtime.
-- **Dynamic Schema Evolution & DLQ**: Versioned schema registry with `BACKWARD`/`FORWARD` compatibility checks and Dead Letter Queue (DLQ) poison pill isolation.
-- **Multi-Tenant Partition Router**: Deterministic `KeyHash` and `TenantPrefix` partitioning preserving strict per-primary-key transactional ordering.
+- **WASM Single Message Transforms (SMTs)**: Sandboxed, high-speed WebAssembly inline transformations powered by Wasmtime with zero-downtime hot-reload registry.
+- **Multi-Tenant Partition Router & Rate Quotas**: Deterministic `KeyHash` and `TenantPrefix` partitioning with per-tenant token-bucket rate-limiting quotas preserving transactional ordering.
 - **Adaptive Token-Bucket Rate Limiter**: Async backpressure traffic shaper protecting memory during downstream sink outages.
 - **SIMD-Accelerated Serialization**: SIMD-json engine for high-throughput zero-copy JSON output.
 - **Prometheus Observability**: Native HTTP metrics scraping endpoint on port `9000` exposing throughput, transformation latency, and replication lag.
