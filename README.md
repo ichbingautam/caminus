@@ -72,6 +72,20 @@ For in-depth technical specifications and Mermaid pipeline sequence diagrams, se
 
 ---
 
+## Performance Benchmarking & Micro-Profiling
+
+Caminus includes built-in micro-benchmarks for measuring event throughput and end-to-end processing latencies under high concurrency:
+
+```bash
+# Run end-to-end pipeline benchmark
+cargo test --test e2e_benchmark -- --nocapture
+
+# Run Prometheus latency histogram validation
+cargo test --test latency_metrics_test -- --nocapture
+```
+
+---
+
 ## License
 
 Distributed under the MIT License.
