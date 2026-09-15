@@ -43,3 +43,24 @@ flowchart LR
 ### 5. Multi-Tenant Router & Adaptive Backpressure (`src/router/`, `src/resiliency/rate_limiter.rs`)
 *   Partitions events using `KeyHash` or `TenantPrefix` strategies.
 *   Throttles ingestion rate via an async `TokenBucketLimiter` to prevent memory OOM during downstream sink outages.
+
+---
+
+## Watermark Reconciliation Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Source as Postgres CDC Source
+    participant Engine as Caminus Engine
+    participant Snapshot as DBLog Snapshotter
+    participant Sink as Kafka Sink
+
+    Source->>Engine: Stream Change Events (Live Log)
+    Engine->>Snapshot: Acquire Low Watermark
+    Snapshot->>Source: Query Chunk (SELECT id FROM table WHERE id BETWEEN A AND B)
+    Source-->>Snapshot: Return Chunk Data
+    Engine->>Snapshot: Acquire High Watermark
+    Snapshot->>Engine: Reconcile Chunk Data with Live Log
+    Engine->>Sink: Forward Reconciled Events
+```
