@@ -8,6 +8,7 @@ pub static DUPLICATES_FILTERED: AtomicU64 = AtomicU64::new(0);
 pub static PROCESSING_LATENCY_SUM_US: AtomicU64 = AtomicU64::new(0); // in microseconds
 pub static PROCESSING_LATENCY_COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// Central thread-safe Prometheus metrics collector and exposition server.
 pub struct MetricsRegistry;
 
 impl MetricsRegistry {
