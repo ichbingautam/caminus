@@ -85,6 +85,51 @@ impl WatermarkSnapshotter {
     }
 }
 
+/// Adaptive async watermarking spooler for CDC log compaction under downstream backpressure.
+pub struct AsyncBackpressureSpooler {
+    spool: std::collections::VecDeque<ChangeEvent>,
+    high_watermark_limit: usize,
+    spooled_bytes: std::sync::atomic::AtomicUsize,
+}
+
+impl AsyncBackpressureSpooler {
+    pub fn new(high_watermark_limit: usize) -> Self {
+        Self {
+            spool: std::collections::VecDeque::new(),
+            high_watermark_limit,
+            spooled_bytes: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    pub fn should_spool(&self) -> bool {
+        self.spooled_bytes.load(std::sync::atomic::Ordering::Relaxed) >= self.high_watermark_limit
+    }
+
+    pub fn push_event(&mut self, event: ChangeEvent) {
+        let size = event.id.len() + event.offset.len() + 16;
+        self.spooled_bytes.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+        self.spool.push_back(event);
+    }
+
+    pub fn pop_event(&mut self) -> Option<ChangeEvent> {
+        if let Some(evt) = self.spool.pop_front() {
+            let size = evt.id.len() + evt.offset.len() + 16;
+            self.spooled_bytes.fetch_sub(size, std::sync::atomic::Ordering::Relaxed);
+            Some(evt)
+        } else {
+            None
+        }
+    }
+
+    pub fn spooled_count(&self) -> usize {
+        self.spool.len()
+    }
+
+    pub fn spooled_bytes(&self) -> usize {
+        self.spooled_bytes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +212,33 @@ mod tests {
             chunk_events[0].after.as_ref().unwrap().get("name").unwrap(),
             "John Updated"
         );
+    }
+
+    #[test]
+    fn test_async_backpressure_spooler() {
+        let mut spooler = AsyncBackpressureSpooler::new(50);
+        assert!(!spooler.should_spool());
+
+        let event = ChangeEvent {
+            id: "12345678901234567890".into(),
+            source_database: "db".into(),
+            source_table_or_collection: "users".into(),
+            operation: Operation::Create,
+            timestamp: Utc::now(),
+            key: json!({ "id": 1 }),
+            before: None,
+            after: Some(json!({ "id": 1 })),
+            transaction_id: None,
+            offset: "12345678901234567890".into(),
+        };
+
+        spooler.push_event(event.clone());
+        assert!(spooler.should_spool());
+        assert_eq!(spooler.spooled_count(), 1);
+
+        let popped = spooler.pop_event();
+        assert!(popped.is_some());
+        assert!(!spooler.should_spool());
+        assert_eq!(spooler.spooled_count(), 0);
     }
 }
