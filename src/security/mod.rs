@@ -1,4 +1,9 @@
 pub mod kms;
+pub mod rate_limiter;
+
+pub use rate_limiter::{
+    RateLimitError, RateLimitPermit, RateLimiterConfig, TenantRateLimiterRegistry, TokenBucket,
+};
 
 use crate::source::ChangeEvent;
 use kms::KmsProvider;
